@@ -10,8 +10,10 @@ import {
   BarChart3,
   Clock,
   CheckCircle2,
+  XCircle,
   Truck,
   PackageCheck,
+  CalendarClock,
   AlertTriangle,
   ChevronRight,
   Users,
@@ -22,6 +24,7 @@ import {
 export function Dashboard() {
   const { role } = useStore();
   if (role === "contratista") return <DashContratista />;
+  if (role === "interventor") return <DashInterventor />;
   if (role === "almacenista") return <DashAlmacenista />;
   return <DashAdmin />;
 }
@@ -29,18 +32,18 @@ export function Dashboard() {
 /* ---------- Contratista ---------- */
 function DashContratista() {
   const { usuario, solicitudes, navigate } = useStore();
-  const mias = solicitudes.filter((s) => s.contratista === usuario?.nombre);
+  const mias = solicitudes.filter((s) => s.contratista === usuario.nombre);
   const acciones = [
     { icon: ShoppingCart, title: "Iniciar solicitud", desc: "Crea y envía una nueva petición de materiales.", go: () => navigate("crear-solicitud") },
     { icon: FileSearch, title: "Ver solicitudes", desc: "Revisa el estado y el historial de tus solicitudes.", go: () => navigate("solicitudes") },
-    { icon: Wrench, title: "Reportar instalación", desc: "Registra el material instalado en terreno.", go: () => navigate("instalacion") },
+    { icon: Wrench, title: "Recoger y cerrar", desc: "Confirma la recogida y reporta el uso del material.", go: () => navigate("cierre") },
     { icon: BarChart3, title: "Reportes", desc: "Visualiza informes y consumo de materiales.", go: () => navigate("reportes") },
   ];
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold tracking-tight">¿Qué te gustaría hacer hoy?</h2>
-        <p className="text-muted-foreground">Bienvenido, {usuario?.nombre} · {usuario?.empresa}</p>
+        <p className="text-muted-foreground">Bienvenido, {usuario.nombre} · {usuario.empresa}</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -63,8 +66,8 @@ function DashContratista() {
       <div className="grid gap-4 sm:grid-cols-4">
         <Kpi label="Total solicitudes" value={mias.length} icon={ClipboardList} tone="slate" />
         <Kpi label="Pendientes" value={mias.filter((s) => s.estado === "Pendiente").length} icon={Clock} tone="amber" />
-        <Kpi label="Despachadas" value={mias.filter((s) => s.estado === "Despachada").length} icon={Truck} tone="blue" />
-        <Kpi label="Instaladas" value={mias.filter((s) => s.estado === "Instalada").length} icon={PackageCheck} tone="primary" />
+        <Kpi label="Por recoger" value={mias.filter((s) => s.estado === "Despachada").length} icon={Truck} tone="blue" />
+        <Kpi label="Cerradas" value={mias.filter((s) => s.estado === "Cerrada").length} icon={PackageCheck} tone="primary" />
       </div>
 
       <Card className="overflow-hidden">
@@ -80,26 +83,63 @@ function DashContratista() {
   );
 }
 
+/* ---------- Interventor ---------- */
+function DashInterventor() {
+  const { solicitudes, navigate } = useStore();
+  const pendientes = solicitudes.filter((s) => s.estado === "Pendiente");
+  const aprobadas = solicitudes.filter((s) => s.estado !== "Pendiente" && s.estado !== "Rechazada");
+  const rechazadas = solicitudes.filter((s) => s.estado === "Rechazada");
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-semibold tracking-tight">Bandeja de aprobación</h2>
+        <p className="text-muted-foreground">Revisa y aprueba las solicitudes de material antes de que pasen a bodega.</p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Kpi label="Por aprobar" value={pendientes.length} icon={Clock} tone="amber" />
+        <Kpi label="Aprobadas" value={aprobadas.length} icon={CheckCircle2} tone="primary" />
+        <Kpi label="Rechazadas" value={rechazadas.length} icon={XCircle} tone="red" />
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <h3 className="font-medium">Pendientes de tu aprobación</h3>
+          <Button variant="ghost" size="sm" onClick={() => navigate("solicitudes")} className="gap-1">
+            Ver todas <ChevronRight className="size-4" />
+          </Button>
+        </div>
+        {pendientes.length === 0 ? (
+          <div className="p-10 text-center text-sm text-muted-foreground">No hay solicitudes pendientes por aprobar. ✅</div>
+        ) : (
+          <SolicitudMiniLista lista={pendientes} />
+        )}
+      </Card>
+    </div>
+  );
+}
+
 /* ---------- Almacenista ---------- */
 function DashAlmacenista() {
   const { solicitudes, materiales, navigate } = useStore();
-  const pendientes = solicitudes.filter((s) => s.estado === "Pendiente");
-  const porDespachar = solicitudes.filter((s) => s.estado === "Aprobada");
+  const porAgendar = solicitudes.filter((s) => s.estado === "Aprobada");
+  const porDespachar = solicitudes.filter((s) => s.estado === "CitaAgendada");
   const criticos = materiales.filter((m) => m.stock <= m.stockMin);
 
-  const cola = [...pendientes, ...porDespachar];
+  const cola = [...porAgendar, ...porDespachar];
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold tracking-tight">Panel de despacho</h2>
-        <p className="text-muted-foreground">Solicitudes por revisar, aprobar y despachar desde bodega.</p>
+        <p className="text-muted-foreground">Agenda citas, despacha material y controla el inventario crítico.</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-4">
-        <Kpi label="Por aprobar" value={pendientes.length} icon={Clock} tone="amber" />
-        <Kpi label="Por despachar" value={porDespachar.length} icon={CheckCircle2} tone="primary" />
-        <Kpi label="Despachadas hoy" value={solicitudes.filter((s) => s.estado === "Despachada").length} icon={Truck} tone="blue" />
+        <Kpi label="Por agendar cita" value={porAgendar.length} icon={CalendarClock} tone="amber" />
+        <Kpi label="Por despachar" value={porDespachar.length} icon={Truck} tone="primary" />
+        <Kpi label="Despachadas" value={solicitudes.filter((s) => s.estado === "Despachada").length} icon={PackageCheck} tone="blue" />
         <Kpi label="Materiales críticos" value={criticos.length} icon={AlertTriangle} tone="red" hint="Bajo stock mínimo" />
       </div>
 
@@ -140,24 +180,24 @@ function DashAlmacenista() {
 function DashAdmin() {
   const { solicitudes, navigate } = useStore();
   const conDesvio = solicitudes.filter(
-    (s) => s.estado === "Instalada" && s.lineas.some((l) => l.cantidadInstalada < l.cantidadDespachada)
+    (s) => s.estado === "Cerrada" && s.lineas.some((l) => l.cantidadInstalada < l.cantidadDespachada)
   );
   const accesos = [
-    { icon: ClipboardList, title: "Ver solicitudes", desc: "Revisa, aprueba y gestiona todas las solicitudes del sistema.", go: () => navigate("solicitudes") },
+    { icon: ClipboardList, title: "Ver solicitudes", desc: "Revisa el estado de todas las solicitudes del sistema.", go: () => navigate("solicitudes") },
     { icon: BarChart3, title: "Reportes de gestión", desc: "Métricas de uso de materiales y costos asociados.", go: () => navigate("reportes") },
     { icon: Users, title: "Trazabilidad", desc: "Historial completo por proyecto, contratista y material.", go: () => navigate("trazabilidad") },
   ];
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Bienvenido, Ana</h2>
-        <p className="text-muted-foreground">Panel de administración · Área de Pérdidas CENS</p>
+        <h2 className="text-2xl font-semibold tracking-tight">Panel de administración</h2>
+        <p className="text-muted-foreground">Área de Pérdidas CENS</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-4">
         <Kpi label="Solicitudes totales" value={solicitudes.length} icon={ClipboardList} tone="slate" />
-        <Kpi label="En proceso" value={solicitudes.filter((s) => ["Pendiente", "Aprobada", "Despachada"].includes(s.estado)).length} icon={Truck} tone="blue" />
-        <Kpi label="Instaladas" value={solicitudes.filter((s) => s.estado === "Instalada").length} icon={PackageCheck} tone="primary" />
+        <Kpi label="En proceso" value={solicitudes.filter((s) => ["Pendiente", "Aprobada", "CitaAgendada", "Despachada", "Recogida"].includes(s.estado)).length} icon={Truck} tone="blue" />
+        <Kpi label="Cerradas" value={solicitudes.filter((s) => s.estado === "Cerrada").length} icon={PackageCheck} tone="primary" />
         <Kpi label="Con desviación" value={conDesvio.length} icon={AlertTriangle} tone="red" hint="Instalado < despachado" />
       </div>
 

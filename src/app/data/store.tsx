@@ -1,8 +1,11 @@
 import { createContext, useContext, useMemo, useState, ReactNode } from "react";
-import { api, supabase, setAccessToken } from "../lib/api";
 
 // ===== Roles y usuarios =====
-export type RoleId = "contratista" | "almacenista" | "admin";
+// El módulo no gestiona autenticación: el usuario y su rol los entrega la
+// aplicación anfitriona vía la prop `usuarioActual` de <MaterialesApp />.
+// En desarrollo standalone (import.meta.env.DEV) se ofrece un selector de
+// rol para poder demostrar el ciclo completo crear → aprobar → despachar.
+export type RoleId = "contratista" | "interventor" | "almacenista" | "admin";
 
 export interface Usuario {
   role: RoleId;
@@ -13,6 +16,7 @@ export interface Usuario {
   iniciales: string;
 }
 
+// Identidades de referencia, usadas únicamente por el selector de rol en modo desarrollo.
 export const USUARIOS: Record<RoleId, Usuario> = {
   contratista: {
     role: "contratista",
@@ -21,6 +25,14 @@ export const USUARIOS: Record<RoleId, Usuario> = {
     email: "carlos.perez@electrocontratos.co",
     empresa: "Electrocontratos SAS",
     iniciales: "CP",
+  },
+  interventor: {
+    role: "interventor",
+    nombre: "Jorge Martínez",
+    cargo: "Interventor de contrato",
+    email: "jorge.martinez@cens.com.co",
+    empresa: "CENS · Interventoría",
+    iniciales: "JM",
   },
   almacenista: {
     role: "almacenista",
@@ -45,7 +57,7 @@ export interface UsuarioSistema {
   id: string;
   nombre: string;
   email: string;
-  rol: "Contratista" | "Almacenista" | "Líder de Pérdidas" | "Administrador" | "Auditor";
+  rol: "Contratista" | "Interventor" | "Almacenista" | "Líder de Pérdidas" | "Administrador" | "Auditor";
   empresa: string;
   estado: "Activo" | "Inactivo";
   ultimoAcceso: string;
@@ -54,10 +66,11 @@ export interface UsuarioSistema {
 export const DIRECTORIO_SEED: UsuarioSistema[] = [
   { id: "u1", nombre: "Carlos Pérez", email: "carlos.perez@electrocontratos.co", rol: "Contratista", empresa: "Electrocontratos SAS", estado: "Activo", ultimoAcceso: "2025-11-28" },
   { id: "u2", nombre: "Laura Ramírez", email: "laura.ramirez@redesnorte.co", rol: "Contratista", empresa: "Redes del Norte Ltda", estado: "Activo", ultimoAcceso: "2025-11-27" },
-  { id: "u3", nombre: "María Gómez", email: "maria.gomez@cens.com.co", rol: "Almacenista", empresa: "CENS · Bodega Central", estado: "Activo", ultimoAcceso: "2025-11-28" },
-  { id: "u4", nombre: "Jorge Peña", email: "jorge.pena@cens.com.co", rol: "Almacenista", empresa: "CENS · Bodega Ocaña", estado: "Activo", ultimoAcceso: "2025-11-26" },
-  { id: "u5", nombre: "Ana García", email: "ana.garcia@cens.com.co", rol: "Líder de Pérdidas", empresa: "CENS · Grupo EPM", estado: "Activo", ultimoAcceso: "2025-11-28" },
-  { id: "u6", nombre: "Diego Torres", email: "diego.torres@cens.com.co", rol: "Auditor", empresa: "CENS · Control Interno", estado: "Inactivo", ultimoAcceso: "2025-10-30" },
+  { id: "u3", nombre: "Jorge Martínez", email: "jorge.martinez@cens.com.co", rol: "Interventor", empresa: "CENS · Interventoría", estado: "Activo", ultimoAcceso: "2025-11-28" },
+  { id: "u4", nombre: "María Gómez", email: "maria.gomez@cens.com.co", rol: "Almacenista", empresa: "CENS · Bodega Central", estado: "Activo", ultimoAcceso: "2025-11-28" },
+  { id: "u5", nombre: "Jorge Peña", email: "jorge.pena@cens.com.co", rol: "Almacenista", empresa: "CENS · Bodega Ocaña", estado: "Activo", ultimoAcceso: "2025-11-26" },
+  { id: "u6", nombre: "Ana García", email: "ana.garcia@cens.com.co", rol: "Líder de Pérdidas", empresa: "CENS · Grupo EPM", estado: "Activo", ultimoAcceso: "2025-11-28" },
+  { id: "u7", nombre: "Diego Torres", email: "diego.torres@cens.com.co", rol: "Auditor", empresa: "CENS · Control Interno", estado: "Inactivo", ultimoAcceso: "2025-10-30" },
 ];
 
 // ===== Tipos de dominio =====
@@ -87,12 +100,25 @@ export interface Proyecto {
   tipo: string;
 }
 
+// Ciclo de vida de la solicitud, alineado al diagrama de flujo:
+// Contratista pide -> Interventor aprueba -> Almacenista agenda cita ->
+// Almacenista despacha -> Contratista recoge -> Contratista usa y cierra.
 export type EstadoSolicitud =
   | "Pendiente"
   | "Aprobada"
   | "Rechazada"
+  | "CitaAgendada"
   | "Despachada"
-  | "Instalada";
+  | "Recogida"
+  | "Cerrada";
+
+export interface Cita {
+  fecha: string;
+  hora: string;
+  lugar: string;
+  creadaPor: string;
+  notificada: boolean;
+}
 
 export interface LineaSolicitud {
   materialId: string;
@@ -120,6 +146,9 @@ export interface Solicitud {
   observacion?: string;
   lineas: LineaSolicitud[];
   historial: { fecha: string; evento: string; usuario: string }[];
+  cita?: Cita;
+  evidenciaUrl?: string;
+  usoTotalConfirmado?: boolean;
 }
 
 // ===== Datos semilla =====
@@ -174,7 +203,7 @@ const seedSolicitudes: Solicitud[] = [
     empresa: "Electrocontratos SAS",
     proyectoId: "p1",
     bodega: "Bodega Central Cúcuta",
-    estado: "Instalada",
+    estado: "Cerrada",
     prioridad: "Alta",
     tipo: "Normalización",
     fechaCreacion: "2025-11-18",
@@ -183,11 +212,16 @@ const seedSolicitudes: Solicitud[] = [
       L(mat("m1"), 40, 40, 38, "NIC 884512 · Circuito 3"),
       L(mat("m7"), 40, 40, 38, "NIC 884512 · Circuito 3"),
     ],
+    cita: { fecha: "2025-11-20", hora: "09:00", lugar: "Bodega Central Cúcuta", creadaPor: "María Gómez", notificada: true },
+    evidenciaUrl: "https://sac.cens.com.co/actas/SOL-2025-0001.pdf",
+    usoTotalConfirmado: false,
     historial: [
       { fecha: "2025-11-18", evento: "Solicitud creada", usuario: "Carlos Pérez" },
-      { fecha: "2025-11-19", evento: "Aprobada por almacén", usuario: "María Gómez" },
-      { fecha: "2025-11-20", evento: "Despachada", usuario: "María Gómez" },
-      { fecha: "2025-11-25", evento: "Instalación reportada", usuario: "Carlos Pérez" },
+      { fecha: "2025-11-19", evento: "Aprobada por interventoría", usuario: "Jorge Martínez" },
+      { fecha: "2025-11-19", evento: "Cita generada para recoger material", usuario: "María Gómez" },
+      { fecha: "2025-11-20", evento: "Despachada desde bodega", usuario: "María Gómez" },
+      { fecha: "2025-11-20", evento: "Material recogido por el contratista", usuario: "Carlos Pérez" },
+      { fecha: "2025-11-25", evento: "Cierre reportado con evidencia", usuario: "Carlos Pérez" },
     ],
   },
   {
@@ -202,10 +236,12 @@ const seedSolicitudes: Solicitud[] = [
     fechaCreacion: "2025-11-22",
     fechaActualizacion: "2025-11-24",
     lineas: [L(mat("m3"), 600, 600, 0)],
+    cita: { fecha: "2025-11-24", hora: "14:00", lugar: "Bodega Ocaña", creadaPor: "Jorge Peña", notificada: true },
     historial: [
       { fecha: "2025-11-22", evento: "Solicitud creada", usuario: "Redes del Norte Ltda" },
-      { fecha: "2025-11-23", evento: "Aprobada por almacén", usuario: "María Gómez" },
-      { fecha: "2025-11-24", evento: "Despachada", usuario: "María Gómez" },
+      { fecha: "2025-11-23", evento: "Aprobada por interventoría", usuario: "Jorge Martínez" },
+      { fecha: "2025-11-23", evento: "Cita generada para recoger material", usuario: "Jorge Peña" },
+      { fecha: "2025-11-24", evento: "Despachada desde bodega", usuario: "Jorge Peña" },
     ],
   },
   {
@@ -237,7 +273,7 @@ const seedSolicitudes: Solicitud[] = [
     lineas: [L(mat("m5"), 120)],
     historial: [
       { fecha: "2025-11-27", evento: "Solicitud creada", usuario: "Redes del Norte Ltda" },
-      { fecha: "2025-11-27", evento: "Aprobada por almacén", usuario: "María Gómez" },
+      { fecha: "2025-11-27", evento: "Aprobada por interventoría", usuario: "Jorge Martínez" },
     ],
   },
   {
@@ -254,7 +290,28 @@ const seedSolicitudes: Solicitud[] = [
     lineas: [L(mat("m6"), 4)],
     historial: [
       { fecha: "2025-11-15", evento: "Solicitud creada", usuario: "Carlos Pérez" },
-      { fecha: "2025-11-16", evento: "Rechazada: Sin stock suficiente, reprogramar", usuario: "María Gómez" },
+      { fecha: "2025-11-16", evento: "Rechazada: Sin stock suficiente, reprogramar", usuario: "Jorge Martínez" },
+    ],
+  },
+  {
+    id: "SOL-2025-0006",
+    contratista: "Carlos Pérez",
+    empresa: "Electrocontratos SAS",
+    proyectoId: "p1",
+    bodega: "Bodega Central Cúcuta",
+    estado: "Recogida",
+    prioridad: "Media",
+    tipo: "Cambio de medidor",
+    fechaCreacion: "2025-11-20",
+    fechaActualizacion: "2025-11-23",
+    lineas: [L(mat("m1"), 20, 20, 0)],
+    cita: { fecha: "2025-11-22", hora: "10:30", lugar: "Bodega Central Cúcuta", creadaPor: "María Gómez", notificada: true },
+    historial: [
+      { fecha: "2025-11-20", evento: "Solicitud creada", usuario: "Carlos Pérez" },
+      { fecha: "2025-11-20", evento: "Aprobada por interventoría", usuario: "Jorge Martínez" },
+      { fecha: "2025-11-21", evento: "Cita generada para recoger material", usuario: "María Gómez" },
+      { fecha: "2025-11-22", evento: "Despachada desde bodega", usuario: "María Gómez" },
+      { fecha: "2025-11-23", evento: "Material recogido por el contratista", usuario: "Carlos Pérez" },
     ],
   },
 ];
@@ -276,13 +333,15 @@ export const SERIE_MENSUAL = [
 ];
 
 const hoy = () => new Date().toISOString().slice(0, 10);
+const esDev = () => Boolean((import.meta as any).env?.DEV);
 
 // ===== Contexto =====
 interface StoreCtx {
-  usuario: Usuario | null;
-  login: (role: RoleId) => Promise<void>;
-  logout: () => Promise<void>;
-  role: RoleId | null;
+  usuario: Usuario;
+  role: RoleId;
+  /** Solo disponible en modo desarrollo (sin usuarioActual inyectado por el host). */
+  puedeCambiarRol: boolean;
+  cambiarRolDemo: (role: RoleId) => void;
 
   view: string;
   params: Record<string, string>;
@@ -303,18 +362,46 @@ interface StoreCtx {
   }) => Promise<string>;
   aprobarSolicitud: (id: string) => Promise<void>;
   rechazarSolicitud: (id: string, motivo: string) => Promise<void>;
+  generarCita: (id: string, cita: { fecha: string; hora: string; lugar: string }) => Promise<void>;
   despacharSolicitud: (id: string, despachos: Record<string, number>) => Promise<void>;
-  reportarInstalacion: (
+  confirmarRecogida: (id: string) => Promise<void>;
+  cerrarSolicitud: (
     id: string,
-    datos: Record<string, { cantidad: number; ubicacion: string }>
+    datos: {
+      lineas: Record<string, { cantidad: number; ubicacion: string }>;
+      evidenciaUrl: string;
+      usoTotalConfirmado: boolean;
+    }
   ) => Promise<void>;
   cargando: boolean;
 }
 
 const Ctx = createContext<StoreCtx | null>(null);
 
-export function StoreProvider({ children }: { children: ReactNode }) {
-  const [usuario, setUsuario] = useState<Usuario | null>(null);
+/**
+ * El módulo persiste su estado en memoria (React state) durante la sesión del
+ * navegador: no depende de ningún backend propio. Esto es intencional para un
+ * componente embebible — la app anfitriona ya tiene su propia API/base de
+ * datos. Cuando el equipo host quiera persistencia real entre sesiones, estas
+ * funciones son el único punto de integración a reemplazar por llamadas a su
+ * backend (o al backend de referencia incluido en supabase/functions/server).
+ */
+let seq = 7;
+const nuevoIdSolicitud = () => `SOL-2025-${String(seq++).padStart(4, "0")}`;
+
+export function StoreProvider({
+  children,
+  usuarioActual,
+}: {
+  children: ReactNode;
+  /** Identidad y rol inyectados por la aplicación anfitriona. Si se omite, solo en
+   *  modo desarrollo se habilita un selector de rol para poder probar el módulo aislado. */
+  usuarioActual?: Usuario;
+}) {
+  const [rolDemo, setRolDemo] = useState<RoleId>("contratista");
+  const usuario = usuarioActual ?? USUARIOS[rolDemo];
+  const puedeCambiarRol = !usuarioActual && esDev();
+
   const [view, setView] = useState("dashboard");
   const [params, setParams] = useState<Record<string, string>>({});
   const [materiales, setMateriales] = useState<Material[]>(MATERIALES);
@@ -328,94 +415,130 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") window.scrollTo({ top: 0 });
   };
 
-  const refrescar = async () => {
-    const data = await api.bootstrap();
-    if (data?.solicitudes) setSolicitudes(data.solicitudes);
-    if (data?.materiales) setMateriales(data.materiales);
-    if (data?.directorio) setDirectorio(data.directorio);
+  const cambiarRolDemo = (role: RoleId) => {
+    setRolDemo(role);
+    navigate("dashboard");
   };
 
-  const login = async (role: RoleId) => {
-    const u = USUARIOS[role];
+  const quien = () => usuario.nombre;
+
+  // Aplica una transición de estado a una solicitud existente.
+  const actualizar = (id: string, fn: (s: Solicitud) => Solicitud) =>
+    setSolicitudes((prev) => prev.map((s) => (s.id === id ? fn(s) : s)));
+
+  const crearSolicitud: StoreCtx["crearSolicitud"] = async (data) => {
     setCargando(true);
     try {
-      // 1) Bootstrap: siembra datos y usuarios de auth (idempotente) y carga estado
-      await refrescar();
-      // 2) Autenticación real (perfiles demo sembrados en el backend)
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: u.email,
-        password: "demo1234",
+      const lineas: LineaSolicitud[] = data.lineas.map(({ materialId, cantidad }) => {
+        const m = materiales.find((x) => x.id === materialId)!;
+        return L(m, cantidad);
       });
-      if (error) console.warn(`Sesión anónima (auth no disponible): ${error.message}`);
-      setAccessToken(data?.session?.access_token ?? null);
-      setUsuario(u);
-      navigate("dashboard");
-    } catch (e) {
-      console.error(`Error en login: ${e}`);
-      // Entrar de todos modos con los datos disponibles (fallback en memoria)
-      setUsuario(u);
-      navigate("dashboard");
+      const id = nuevoIdSolicitud();
+      const nueva: Solicitud = {
+        id,
+        contratista: usuario.nombre,
+        empresa: usuario.empresa,
+        proyectoId: data.proyectoId,
+        bodega: data.bodega,
+        estado: "Pendiente",
+        prioridad: data.prioridad,
+        tipo: data.tipo,
+        fechaCreacion: hoy(),
+        fechaActualizacion: hoy(),
+        observacion: data.observacion,
+        lineas,
+        historial: [{ fecha: hoy(), evento: "Solicitud creada", usuario: usuario.nombre }],
+      };
+      setSolicitudes((prev) => [nueva, ...prev]);
+      return id;
     } finally {
       setCargando(false);
     }
   };
 
-  const logout = async () => {
-    try { await supabase.auth.signOut(); } catch (e) { console.error(`Error al cerrar sesión: ${e}`); }
-    setAccessToken(null);
-    setUsuario(null);
-    navigate("dashboard");
-  };
-
-  const quien = () => usuario?.nombre ?? "Sistema";
-  const upsertSolicitud = (s: Solicitud) =>
-    setSolicitudes((prev) => (prev.some((x) => x.id === s.id) ? prev.map((x) => (x.id === s.id ? s : x)) : [s, ...prev]));
-
-  const crearSolicitud: StoreCtx["crearSolicitud"] = async (data) => {
-    const nueva = await api.crearSolicitud({
-      contratista: usuario?.nombre ?? "Contratista",
-      empresa: usuario?.empresa ?? "",
-      proyectoId: data.proyectoId,
-      bodega: data.bodega,
-      prioridad: data.prioridad,
-      tipo: data.tipo,
-      observacion: data.observacion,
-      lineas: data.lineas,
-    });
-    upsertSolicitud(nueva);
-    return nueva.id as string;
-  };
-
   const aprobarSolicitud: StoreCtx["aprobarSolicitud"] = async (id) => {
-    upsertSolicitud(await api.aprobar(id, quien()));
+    actualizar(id, (s) => ({
+      ...s,
+      estado: "Aprobada",
+      fechaActualizacion: hoy(),
+      historial: [...s.historial, { fecha: hoy(), evento: "Aprobada por interventoría", usuario: quien() }],
+    }));
   };
+
   const rechazarSolicitud: StoreCtx["rechazarSolicitud"] = async (id, motivo) => {
-    upsertSolicitud(await api.rechazar(id, quien(), motivo));
+    actualizar(id, (s) => ({
+      ...s,
+      estado: "Rechazada",
+      fechaActualizacion: hoy(),
+      historial: [...s.historial, { fecha: hoy(), evento: `Rechazada: ${motivo}`, usuario: quien() }],
+    }));
   };
+
+  const generarCita: StoreCtx["generarCita"] = async (id, cita) => {
+    actualizar(id, (s) => ({
+      ...s,
+      estado: "CitaAgendada",
+      fechaActualizacion: hoy(),
+      cita: { ...cita, creadaPor: quien(), notificada: true },
+      historial: [
+        ...s.historial,
+        { fecha: hoy(), evento: `Cita generada para recoger material: ${cita.fecha} ${cita.hora} · ${cita.lugar}`, usuario: quien() },
+        { fecha: hoy(), evento: "Contratista notificado de la cita", usuario: "Sistema" },
+      ],
+    }));
+  };
+
   const despacharSolicitud: StoreCtx["despacharSolicitud"] = async (id, despachos) => {
-    upsertSolicitud(await api.despachar(id, quien(), despachos));
-    // Refrescar inventario (el stock cambió en el servidor)
-    try { await refrescar(); } catch (e) { console.error(`Error al refrescar inventario: ${e}`); }
+    setMateriales((prev) =>
+      prev.map((m) => (despachos[m.id] != null ? { ...m, stock: Math.max(0, m.stock - despachos[m.id]) } : m))
+    );
+    actualizar(id, (s) => ({
+      ...s,
+      estado: "Despachada",
+      fechaActualizacion: hoy(),
+      lineas: s.lineas.map((l) => ({ ...l, cantidadDespachada: despachos[l.materialId] ?? l.cantidadDespachada })),
+      historial: [...s.historial, { fecha: hoy(), evento: "Despachada desde bodega (checklist verificado)", usuario: quien() }],
+    }));
   };
-  const reportarInstalacion: StoreCtx["reportarInstalacion"] = async (id, datos) => {
-    upsertSolicitud(await api.instalar(id, quien(), datos));
+
+  const confirmarRecogida: StoreCtx["confirmarRecogida"] = async (id) => {
+    actualizar(id, (s) => ({
+      ...s,
+      estado: "Recogida",
+      fechaActualizacion: hoy(),
+      historial: [...s.historial, { fecha: hoy(), evento: "Material recogido por el contratista", usuario: quien() }],
+    }));
+  };
+
+  const cerrarSolicitud: StoreCtx["cerrarSolicitud"] = async (id, datos) => {
+    actualizar(id, (s) => ({
+      ...s,
+      estado: "Cerrada",
+      fechaActualizacion: hoy(),
+      evidenciaUrl: datos.evidenciaUrl,
+      usoTotalConfirmado: datos.usoTotalConfirmado,
+      lineas: s.lineas.map((l) => ({
+        ...l,
+        cantidadInstalada: datos.lineas[l.materialId]?.cantidad ?? l.cantidadInstalada,
+        ubicacion: datos.lineas[l.materialId]?.ubicacion ?? l.ubicacion,
+      })),
+      historial: [...s.historial, { fecha: hoy(), evento: "Cierre reportado con evidencia", usuario: quien() }],
+    }));
   };
 
   const guardarUsuario: StoreCtx["guardarUsuario"] = async (u) => {
-    const guardado = await api.guardarUsuario(u);
-    setDirectorio((prev) => (prev.some((x) => x.id === guardado.id) ? prev.map((x) => (x.id === guardado.id ? guardado : x)) : [...prev, guardado]));
+    setDirectorio((prev) => (prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u]));
   };
   const toggleUsuario: StoreCtx["toggleUsuario"] = async (id) => {
-    const actualizado = await api.toggleUsuario(id);
-    setDirectorio((prev) => prev.map((x) => (x.id === id ? actualizado : x)));
+    setDirectorio((prev) => prev.map((x) => (x.id === id ? { ...x, estado: x.estado === "Activo" ? "Inactivo" : "Activo" } : x)));
   };
 
   const value = useMemo<StoreCtx>(
     () => ({
       usuario,
-      login,
-      logout,
-      role: usuario?.role ?? null,
+      role: usuario.role,
+      puedeCambiarRol,
+      cambiarRolDemo,
       view,
       params,
       navigate,
@@ -427,11 +550,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       crearSolicitud,
       aprobarSolicitud,
       rechazarSolicitud,
+      generarCita,
       despacharSolicitud,
-      reportarInstalacion,
+      confirmarRecogida,
+      cerrarSolicitud,
       cargando,
     }),
-    [usuario, view, params, materiales, solicitudes, directorio, cargando]
+    [usuario, puedeCambiarRol, view, params, materiales, solicitudes, directorio, cargando]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -460,7 +585,7 @@ export interface Alerta {
 export const detectarAlertas = (solicitudes: Solicitud[]): Alerta[] => {
   const out: Alerta[] = [];
   solicitudes
-    .filter((s) => s.estado === "Instalada")
+    .filter((s) => s.estado === "Cerrada")
     .forEach((s) =>
       s.lineas.forEach((l) => {
         if (l.cantidadDespachada > 0 && l.cantidadInstalada < l.cantidadDespachada) {

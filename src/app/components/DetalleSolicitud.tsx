@@ -3,7 +3,9 @@ import { useStore, proyectoDe, fmtCOP, totalSolicitud } from "../data/store";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
+import { Checkbox } from "./ui/checkbox";
 import { Progress } from "./ui/progress";
 import { EstadoBadge, PrioridadBadge } from "./EstadoBadge";
 import {
@@ -14,14 +16,28 @@ import {
 } from "./ui/dialog";
 import {
   ArrowLeft, CheckCircle2, XCircle, Truck, MapPin, FileDown, AlertTriangle,
+  CalendarClock, PackageCheck, Wrench, ExternalLink,
 } from "lucide-react";
+import { toast } from "sonner";
 import { exportarPDF, tablaHTML } from "../lib/exportar";
 
 export function DetalleSolicitud() {
-  const { params, solicitudes, navigate, role, aprobarSolicitud, rechazarSolicitud } = useStore();
+  const {
+    params, solicitudes, navigate, role,
+    aprobarSolicitud, rechazarSolicitud, confirmarRecogida,
+  } = useStore();
   const s = solicitudes.find((x) => x.id === params.id);
   if (!s) return <div className="p-8">Solicitud no encontrada. <Button variant="link" onClick={() => navigate("solicitudes")}>Volver</Button></div>;
   const p = proyectoDe(s.proyectoId);
+
+  const confirmarRecogidaYToast = async () => {
+    try {
+      await confirmarRecogida(s.id);
+      toast.success("Recogida confirmada", { description: "Ya puedes reportar el uso del material." });
+    } catch (e) {
+      toast.error("No se pudo confirmar la recogida", { description: String(e) });
+    }
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -35,7 +51,7 @@ export function DetalleSolicitud() {
           <EstadoBadge estado={s.estado} />
           <PrioridadBadge prioridad={s.prioridad} />
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             className="gap-2"
@@ -52,7 +68,8 @@ export function DetalleSolicitud() {
           >
             <FileDown className="size-4" /> Exportar PDF
           </Button>
-          {role === "almacenista" && s.estado === "Pendiente" && (
+
+          {role === "interventor" && s.estado === "Pendiente" && (
             <>
               <RechazarDialog onConfirm={(m) => { rechazarSolicitud(s.id, m); }} />
               <Button className="gap-2" onClick={() => aprobarSolicitud(s.id)}>
@@ -60,10 +77,18 @@ export function DetalleSolicitud() {
               </Button>
             </>
           )}
-          {role === "almacenista" && s.estado === "Aprobada" && <DespacharDialog id={s.id} />}
+
+          {role === "almacenista" && s.estado === "Aprobada" && <GenerarCitaDialog id={s.id} />}
+          {role === "almacenista" && s.estado === "CitaAgendada" && <DespacharDialog id={s.id} />}
+
           {role === "contratista" && s.estado === "Despachada" && (
-            <Button className="gap-2" onClick={() => navigate("instalacion", { id: s.id })}>
-              <MapPin className="size-4" /> Reportar instalación
+            <Button className="gap-2" onClick={confirmarRecogidaYToast}>
+              <PackageCheck className="size-4" /> Confirmar recogida
+            </Button>
+          )}
+          {role === "contratista" && s.estado === "Recogida" && (
+            <Button className="gap-2" onClick={() => navigate("cierre", { id: s.id })}>
+              <Wrench className="size-4" /> Reportar uso y cerrar
             </Button>
           )}
         </div>
@@ -87,6 +112,40 @@ export function DetalleSolicitud() {
           </div>
         )}
       </Card>
+
+      {/* Cita */}
+      {s.cita && (
+        <Card className="flex flex-wrap items-center gap-4 border-violet-200 bg-violet-50/50 p-5">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-700">
+            <CalendarClock className="size-5" />
+          </div>
+          <div className="flex-1">
+            <div className="font-medium text-violet-900">Cita para recoger el material</div>
+            <div className="text-sm text-violet-800/80">
+              {s.cita.fecha} · {s.cita.hora} · {s.cita.lugar} — generada por {s.cita.creadaPor}
+              {s.cita.notificada && " · contratista notificado"}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Evidencia de cierre */}
+      {s.evidenciaUrl && (
+        <Card className="flex flex-wrap items-center gap-4 p-5">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <FileDown className="size-5" />
+          </div>
+          <div className="flex-1">
+            <div className="font-medium">Evidencia de uso del material</div>
+            <div className="text-sm text-muted-foreground">
+              {s.usoTotalConfirmado ? "El contratista confirmó el uso total del material entregado." : "Uso parcial reportado por el contratista."}
+            </div>
+          </div>
+          <a href={s.evidenciaUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+            Ver soporte <ExternalLink className="size-3.5" />
+          </a>
+        </Card>
+      )}
 
       {/* Materiales */}
       <Card className="overflow-hidden">
@@ -173,6 +232,60 @@ function RechazarDialog({ onConfirm }: { onConfirm: (m: string) => void }) {
   );
 }
 
+function GenerarCitaDialog({ id }: { id: string }) {
+  const { generarCita } = useStore();
+  const [open, setOpen] = useState(false);
+  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [hora, setHora] = useState("09:00");
+  const [lugar, setLugar] = useState("");
+  const [enviando, setEnviando] = useState(false);
+
+  const confirmar = async () => {
+    setEnviando(true);
+    try {
+      await generarCita(id, { fecha, hora, lugar });
+      toast.success("Cita generada", { description: "Se notificó al contratista." });
+      setOpen(false);
+    } catch (e) {
+      toast.error("No se pudo generar la cita", { description: String(e) });
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button className="gap-2"><CalendarClock className="size-4" /> Generar cita</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Agendar cita para recoger material</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">Al confirmar, se notifica automáticamente al contratista.</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label>Fecha</Label>
+            <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Hora</Label>
+            <Input type="time" value={hora} onChange={(e) => setHora(e.target.value)} />
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Lugar</Label>
+          <Input placeholder="Ej. Bodega Central Cúcuta" value={lugar} onChange={(e) => setLugar(e.target.value)} />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
+          <Button disabled={!lugar.trim() || enviando} onClick={confirmar} className="gap-2">
+            <CalendarClock className="size-4" /> {enviando ? "Agendando…" : "Confirmar cita"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function DespacharDialog({ id }: { id: string }) {
   const { solicitudes, despacharSolicitud, materiales } = useStore();
   const s = solicitudes.find((x) => x.id === id)!;
@@ -180,10 +293,14 @@ function DespacharDialog({ id }: { id: string }) {
   const [cant, setCant] = useState<Record<string, number>>(
     Object.fromEntries(s.lineas.map((l) => [l.materialId, l.cantidadSolicitada]))
   );
+  const [verificado, setVerificado] = useState<Record<string, boolean>>(
+    Object.fromEntries(s.lineas.map((l) => [l.materialId, false]))
+  );
 
   const totalSol = s.lineas.reduce((a, l) => a + l.cantidadSolicitada, 0);
   const totalDes = Object.values(cant).reduce((a, b) => a + (b || 0), 0);
   const pct = Math.round((totalDes / totalSol) * 100);
+  const checklistCompleto = s.lineas.every((l) => verificado[l.materialId]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -192,7 +309,7 @@ function DespacharDialog({ id }: { id: string }) {
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Despacho de {s.id}</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">Reporta la cantidad entregada por material. El inventario se descuenta al finalizar.</p>
+        <p className="text-sm text-muted-foreground">Verifica cada material del checklist y reporta la cantidad entregada. El inventario se descuenta al finalizar.</p>
 
         <div className="rounded-lg bg-muted/50 p-4">
           <div className="mb-2 flex justify-between text-sm">
@@ -208,6 +325,10 @@ function DespacharDialog({ id }: { id: string }) {
             const excede = (cant[l.materialId] || 0) > stock;
             return (
               <div key={l.materialId} className="flex items-center gap-3 rounded-lg border p-3">
+                <Checkbox
+                  checked={verificado[l.materialId]}
+                  onCheckedChange={(v) => setVerificado((c) => ({ ...c, [l.materialId]: Boolean(v) }))}
+                />
                 <div className="flex-1">
                   <div className="text-sm font-medium">{l.codigo} · {l.nombre}</div>
                   <div className="text-xs text-muted-foreground">
@@ -227,11 +348,15 @@ function DespacharDialog({ id }: { id: string }) {
             );
           })}
         </div>
+        {!checklistCompleto && (
+          <p className="text-xs text-muted-foreground">Marca el checklist de cada material para habilitar el despacho.</p>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
           <Button
             className="gap-2"
+            disabled={!checklistCompleto}
             onClick={() => { despacharSolicitud(id, cant); setOpen(false); }}
           >
             <CheckCircle2 className="size-4" /> Finalizar despacho

@@ -1,7 +1,6 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
-import { createClient } from "jsr:@supabase/supabase-js@2";
 import * as kv from "./kv_store.tsx";
 
 const app = new Hono();
@@ -18,10 +17,6 @@ app.use(
 );
 
 const PREFIX = "/make-server-dca001ee";
-const admin = createClient(
-  Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-);
 
 const hoy = () => new Date().toISOString().slice(0, 10);
 
@@ -40,10 +35,11 @@ const SEED_MATERIALES = [
 const SEED_USUARIOS = [
   { id: "u1", nombre: "Carlos Pérez", email: "carlos.perez@electrocontratos.co", rol: "Contratista", empresa: "Electrocontratos SAS", estado: "Activo", ultimoAcceso: "2025-11-28" },
   { id: "u2", nombre: "Laura Ramírez", email: "laura.ramirez@redesnorte.co", rol: "Contratista", empresa: "Redes del Norte Ltda", estado: "Activo", ultimoAcceso: "2025-11-27" },
-  { id: "u3", nombre: "María Gómez", email: "maria.gomez@cens.com.co", rol: "Almacenista", empresa: "CENS · Bodega Central", estado: "Activo", ultimoAcceso: "2025-11-28" },
-  { id: "u4", nombre: "Jorge Peña", email: "jorge.pena@cens.com.co", rol: "Almacenista", empresa: "CENS · Bodega Ocaña", estado: "Activo", ultimoAcceso: "2025-11-26" },
-  { id: "u5", nombre: "Ana García", email: "ana.garcia@cens.com.co", rol: "Líder de Pérdidas", empresa: "CENS · Grupo EPM", estado: "Activo", ultimoAcceso: "2025-11-28" },
-  { id: "u6", nombre: "Diego Torres", email: "diego.torres@cens.com.co", rol: "Auditor", empresa: "CENS · Control Interno", estado: "Inactivo", ultimoAcceso: "2025-10-30" },
+  { id: "u3", nombre: "Jorge Martínez", email: "jorge.martinez@cens.com.co", rol: "Interventor", empresa: "CENS · Interventoría", estado: "Activo", ultimoAcceso: "2025-11-28" },
+  { id: "u4", nombre: "María Gómez", email: "maria.gomez@cens.com.co", rol: "Almacenista", empresa: "CENS · Bodega Central", estado: "Activo", ultimoAcceso: "2025-11-28" },
+  { id: "u5", nombre: "Jorge Peña", email: "jorge.pena@cens.com.co", rol: "Almacenista", empresa: "CENS · Bodega Ocaña", estado: "Activo", ultimoAcceso: "2025-11-26" },
+  { id: "u6", nombre: "Ana García", email: "ana.garcia@cens.com.co", rol: "Líder de Pérdidas", empresa: "CENS · Grupo EPM", estado: "Activo", ultimoAcceso: "2025-11-28" },
+  { id: "u7", nombre: "Diego Torres", email: "diego.torres@cens.com.co", rol: "Auditor", empresa: "CENS · Control Interno", estado: "Inactivo", ultimoAcceso: "2025-10-30" },
 ];
 
 const L = (m: any, sol: number, desp = 0, inst = 0, ubic?: string) => ({
@@ -53,28 +49,46 @@ const L = (m: any, sol: number, desp = 0, inst = 0, ubic?: string) => ({
 const M = (id: string) => SEED_MATERIALES.find((m) => m.id === id)!;
 
 const SEED_SOLICITUDES = [
-  { id: "SOL-2025-0001", contratista: "Carlos Pérez", empresa: "Electrocontratos SAS", proyectoId: "p1", bodega: "Bodega Central Cúcuta", estado: "Instalada", prioridad: "Alta", tipo: "Normalización", fechaCreacion: "2025-11-18", fechaActualizacion: "2025-11-25",
+  { id: "SOL-2025-0001", contratista: "Carlos Pérez", empresa: "Electrocontratos SAS", proyectoId: "p1", bodega: "Bodega Central Cúcuta", estado: "Cerrada", prioridad: "Alta", tipo: "Normalización", fechaCreacion: "2025-11-18", fechaActualizacion: "2025-11-25",
     lineas: [L(M("m1"), 40, 40, 38, "NIC 884512 · Circuito 3"), L(M("m7"), 40, 40, 38, "NIC 884512 · Circuito 3")],
-    historial: [{ fecha: "2025-11-18", evento: "Solicitud creada", usuario: "Carlos Pérez" }, { fecha: "2025-11-19", evento: "Aprobada por almacén", usuario: "María Gómez" }, { fecha: "2025-11-20", evento: "Despachada", usuario: "María Gómez" }, { fecha: "2025-11-25", evento: "Instalación reportada", usuario: "Carlos Pérez" }] },
+    cita: { fecha: "2025-11-20", hora: "09:00", lugar: "Bodega Central Cúcuta", creadaPor: "María Gómez", notificada: true },
+    evidenciaUrl: "https://sac.cens.com.co/actas/SOL-2025-0001.pdf", usoTotalConfirmado: false,
+    historial: [
+      { fecha: "2025-11-18", evento: "Solicitud creada", usuario: "Carlos Pérez" },
+      { fecha: "2025-11-19", evento: "Aprobada por interventoría", usuario: "Jorge Martínez" },
+      { fecha: "2025-11-19", evento: "Cita generada para recoger material", usuario: "María Gómez" },
+      { fecha: "2025-11-20", evento: "Despachada desde bodega", usuario: "María Gómez" },
+      { fecha: "2025-11-20", evento: "Material recogido por el contratista", usuario: "Carlos Pérez" },
+      { fecha: "2025-11-25", evento: "Cierre reportado con evidencia", usuario: "Carlos Pérez" },
+    ] },
   { id: "SOL-2025-0002", contratista: "Redes del Norte Ltda", empresa: "Redes del Norte Ltda", proyectoId: "p2", bodega: "Bodega Ocaña", estado: "Despachada", prioridad: "Media", tipo: "Recuperación", fechaCreacion: "2025-11-22", fechaActualizacion: "2025-11-24",
     lineas: [L(M("m3"), 600, 600, 0)],
-    historial: [{ fecha: "2025-11-22", evento: "Solicitud creada", usuario: "Redes del Norte Ltda" }, { fecha: "2025-11-23", evento: "Aprobada por almacén", usuario: "María Gómez" }, { fecha: "2025-11-24", evento: "Despachada", usuario: "María Gómez" }] },
+    cita: { fecha: "2025-11-24", hora: "14:00", lugar: "Bodega Ocaña", creadaPor: "Jorge Peña", notificada: true },
+    historial: [
+      { fecha: "2025-11-22", evento: "Solicitud creada", usuario: "Redes del Norte Ltda" },
+      { fecha: "2025-11-23", evento: "Aprobada por interventoría", usuario: "Jorge Martínez" },
+      { fecha: "2025-11-23", evento: "Cita generada para recoger material", usuario: "Jorge Peña" },
+      { fecha: "2025-11-24", evento: "Despachada desde bodega", usuario: "Jorge Peña" },
+    ] },
   { id: "SOL-2025-0003", contratista: "Carlos Pérez", empresa: "Electrocontratos SAS", proyectoId: "p4", bodega: "Bodega Central Cúcuta", estado: "Pendiente", prioridad: "Alta", tipo: "Blindaje", fechaCreacion: "2025-11-28", fechaActualizacion: "2025-11-28", observacion: "Requerido para intervención de fin de semana.",
     lineas: [L(M("m2"), 15), L(M("m8"), 30)],
     historial: [{ fecha: "2025-11-28", evento: "Solicitud creada", usuario: "Carlos Pérez" }] },
   { id: "SOL-2025-0004", contratista: "Redes del Norte Ltda", empresa: "Redes del Norte Ltda", proyectoId: "p3", bodega: "Bodega Pamplona", estado: "Aprobada", prioridad: "Baja", tipo: "Macromedición", fechaCreacion: "2025-11-27", fechaActualizacion: "2025-11-27",
     lineas: [L(M("m5"), 120)],
-    historial: [{ fecha: "2025-11-27", evento: "Solicitud creada", usuario: "Redes del Norte Ltda" }, { fecha: "2025-11-27", evento: "Aprobada por almacén", usuario: "María Gómez" }] },
+    historial: [{ fecha: "2025-11-27", evento: "Solicitud creada", usuario: "Redes del Norte Ltda" }, { fecha: "2025-11-27", evento: "Aprobada por interventoría", usuario: "Jorge Martínez" }] },
   { id: "SOL-2025-0005", contratista: "Carlos Pérez", empresa: "Electrocontratos SAS", proyectoId: "p1", bodega: "Bodega Central Cúcuta", estado: "Rechazada", prioridad: "Media", tipo: "Normalización", fechaCreacion: "2025-11-15", fechaActualizacion: "2025-11-16",
     lineas: [L(M("m6"), 4)],
-    historial: [{ fecha: "2025-11-15", evento: "Solicitud creada", usuario: "Carlos Pérez" }, { fecha: "2025-11-16", evento: "Rechazada: Sin stock suficiente, reprogramar", usuario: "María Gómez" }] },
-];
-
-// Usuarios de autenticación (perfiles demo)
-const AUTH_USERS = [
-  { email: "carlos.perez@electrocontratos.co", nombre: "Carlos Pérez", role: "contratista" },
-  { email: "maria.gomez@cens.com.co", nombre: "María Gómez", role: "almacenista" },
-  { email: "ana.garcia@cens.com.co", nombre: "Ana García", role: "admin" },
+    historial: [{ fecha: "2025-11-15", evento: "Solicitud creada", usuario: "Carlos Pérez" }, { fecha: "2025-11-16", evento: "Rechazada: Sin stock suficiente, reprogramar", usuario: "Jorge Martínez" }] },
+  { id: "SOL-2025-0006", contratista: "Carlos Pérez", empresa: "Electrocontratos SAS", proyectoId: "p1", bodega: "Bodega Central Cúcuta", estado: "Recogida", prioridad: "Media", tipo: "Cambio de medidor", fechaCreacion: "2025-11-20", fechaActualizacion: "2025-11-23",
+    lineas: [L(M("m1"), 20, 20, 0)],
+    cita: { fecha: "2025-11-22", hora: "10:30", lugar: "Bodega Central Cúcuta", creadaPor: "María Gómez", notificada: true },
+    historial: [
+      { fecha: "2025-11-20", evento: "Solicitud creada", usuario: "Carlos Pérez" },
+      { fecha: "2025-11-20", evento: "Aprobada por interventoría", usuario: "Jorge Martínez" },
+      { fecha: "2025-11-21", evento: "Cita generada para recoger material", usuario: "María Gómez" },
+      { fecha: "2025-11-22", evento: "Despachada desde bodega", usuario: "María Gómez" },
+      { fecha: "2025-11-23", evento: "Material recogido por el contratista", usuario: "Carlos Pérez" },
+    ] },
 ];
 
 // ---------- Seed idempotente ----------
@@ -84,20 +98,7 @@ async function ensureSeed() {
   await kv.mset(SEED_MATERIALES.map((m) => `mat:${m.id}`), SEED_MATERIALES);
   await kv.mset(SEED_USUARIOS.map((u) => `usr:${u.id}`), SEED_USUARIOS);
   await kv.mset(SEED_SOLICITUDES.map((s) => `sol:${s.id}`), SEED_SOLICITUDES);
-  await kv.set("seq", 6);
-  // Crear usuarios de auth (email confirmado; no hay servidor de correo configurado)
-  for (const u of AUTH_USERS) {
-    try {
-      await admin.auth.admin.createUser({
-        email: u.email,
-        password: "demo1234",
-        user_metadata: { name: u.nombre, role: u.role },
-        email_confirm: true,
-      });
-    } catch (e) {
-      console.log(`Seed auth user error (${u.email}): ${e}`);
-    }
-  }
+  await kv.set("seq", 7);
   await kv.set("seeded", true);
 }
 
@@ -131,7 +132,7 @@ app.post(`${PREFIX}/solicitudes`, async (c) => {
   try {
     const body = await c.req.json();
     const materiales = await getMateriales();
-    const seq = (await kv.get("seq")) ?? 6;
+    const seq = (await kv.get("seq")) ?? 7;
     const id = `SOL-2025-${String(seq).padStart(4, "0")}`;
     const lineas = (body.lineas ?? []).map((l: any) => {
       const m = materiales.find((x: any) => x.id === l.materialId);
@@ -167,20 +168,35 @@ async function transicion(c: any, id: string, fn: (s: any, body: any) => Promise
   }
 }
 
+// Interventor aprueba/rechaza la solicitud
 app.post(`${PREFIX}/solicitudes/:id/aprobar`, (c) =>
   transicion(c, c.req.param("id"), (s, b) => ({
     ...s, estado: "Aprobada", fechaActualizacion: hoy(),
-    historial: [...s.historial, { fecha: hoy(), evento: "Aprobada por almacén", usuario: b.usuario ?? "Almacén" }],
+    historial: [...s.historial, { fecha: hoy(), evento: "Aprobada por interventoría", usuario: b.usuario ?? "Interventor" }],
   }))
 );
 
 app.post(`${PREFIX}/solicitudes/:id/rechazar`, (c) =>
   transicion(c, c.req.param("id"), (s, b) => ({
     ...s, estado: "Rechazada", fechaActualizacion: hoy(),
-    historial: [...s.historial, { fecha: hoy(), evento: `Rechazada: ${b.motivo ?? ""}`, usuario: b.usuario ?? "Almacén" }],
+    historial: [...s.historial, { fecha: hoy(), evento: `Rechazada: ${b.motivo ?? ""}`, usuario: b.usuario ?? "Interventor" }],
   }))
 );
 
+// Almacenista genera la cita para recoger el material y se notifica al contratista
+app.post(`${PREFIX}/solicitudes/:id/generar-cita`, (c) =>
+  transicion(c, c.req.param("id"), (s, b) => ({
+    ...s, estado: "CitaAgendada", fechaActualizacion: hoy(),
+    cita: { fecha: b.fecha, hora: b.hora, lugar: b.lugar, creadaPor: b.usuario ?? "Almacén", notificada: true },
+    historial: [
+      ...s.historial,
+      { fecha: hoy(), evento: `Cita generada para recoger material: ${b.fecha} ${b.hora} · ${b.lugar}`, usuario: b.usuario ?? "Almacén" },
+      { fecha: hoy(), evento: "Contratista notificado de la cita", usuario: "Sistema" },
+    ],
+  }))
+);
+
+// Almacenista despacha el material (con checklist de cantidades verificadas)
 app.post(`${PREFIX}/solicitudes/:id/despachar`, (c) =>
   transicion(c, c.req.param("id"), async (s, b) => {
     const despachos: Record<string, number> = b.despachos ?? {};
@@ -191,22 +207,33 @@ app.post(`${PREFIX}/solicitudes/:id/despachar`, (c) =>
     return {
       ...s, estado: "Despachada", fechaActualizacion: hoy(),
       lineas: s.lineas.map((l: any) => ({ ...l, cantidadDespachada: despachos[l.materialId] ?? l.cantidadDespachada })),
-      historial: [...s.historial, { fecha: hoy(), evento: "Despachada desde bodega", usuario: b.usuario ?? "Almacén" }],
+      historial: [...s.historial, { fecha: hoy(), evento: "Despachada desde bodega (checklist verificado)", usuario: b.usuario ?? "Almacén" }],
     };
   })
 );
 
-app.post(`${PREFIX}/solicitudes/:id/instalar`, (c) =>
+// Contratista confirma que recogió el material en bodega
+app.post(`${PREFIX}/solicitudes/:id/confirmar-recogida`, (c) =>
+  transicion(c, c.req.param("id"), (s, b) => ({
+    ...s, estado: "Recogida", fechaActualizacion: hoy(),
+    historial: [...s.historial, { fecha: hoy(), evento: "Material recogido por el contratista", usuario: b.usuario ?? "Contratista" }],
+  }))
+);
+
+// Contratista cierra la solicitud: reporta uso del material y anexa evidencia (enlace)
+app.post(`${PREFIX}/solicitudes/:id/cerrar`, (c) =>
   transicion(c, c.req.param("id"), (s, b) => {
-    const datos: Record<string, { cantidad: number; ubicacion: string }> = b.datos ?? {};
+    const lineas: Record<string, { cantidad: number; ubicacion: string }> = b.lineas ?? {};
     return {
-      ...s, estado: "Instalada", fechaActualizacion: hoy(),
+      ...s, estado: "Cerrada", fechaActualizacion: hoy(),
+      evidenciaUrl: b.evidenciaUrl ?? s.evidenciaUrl,
+      usoTotalConfirmado: Boolean(b.usoTotalConfirmado),
       lineas: s.lineas.map((l: any) => ({
         ...l,
-        cantidadInstalada: datos[l.materialId]?.cantidad ?? l.cantidadInstalada,
-        ubicacion: datos[l.materialId]?.ubicacion ?? l.ubicacion,
+        cantidadInstalada: lineas[l.materialId]?.cantidad ?? l.cantidadInstalada,
+        ubicacion: lineas[l.materialId]?.ubicacion ?? l.ubicacion,
       })),
-      historial: [...s.historial, { fecha: hoy(), evento: "Instalación reportada en terreno", usuario: b.usuario ?? "Contratista" }],
+      historial: [...s.historial, { fecha: hoy(), evento: "Cierre reportado con evidencia", usuario: b.usuario ?? "Contratista" }],
     };
   })
 );
