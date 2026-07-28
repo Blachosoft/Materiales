@@ -18,8 +18,10 @@ const ESTADOS: (EstadoSolicitud | "Todos")[] = [
   "Todos",
   "Pendiente",
   "Aprobada",
+  "CitaAgendada",
   "Despachada",
-  "Instalada",
+  "Recogida",
+  "Cerrada",
   "Rechazada",
 ];
 
